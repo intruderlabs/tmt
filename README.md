@@ -1,2 +1,44 @@
 # tmt
-Target my Target
+
+	▄▖▖  ▖▄▖      ▄▖        ▗   ▖  ▖    ▄▖        ▗ 
+	▐ ▛▖▞▌▐   ▄▖  ▐ ▀▌▛▘▛▌█▌▜▘  ▛▖▞▌▌▌  ▐ ▀▌▛▘▛▌█▌▜▘
+	▐ ▌▝ ▌▐       ▐ █▌▌ ▙▌▙▖▐▖  ▌▝ ▌▙▌  ▐ █▌▌ ▙▌▙▖▐▖
+                    	▄▌          ▄▌        ▄▌    
+	AWS API Gateway reverse proxy for security testing
+
+TMT (Target my Target) stands up an AWS API Gateway REST API that proxies all traffic to a target URL, so requests appear to originate from AWS instead of your own
+infrastructure. Built for authorized security testing engagements.
+
+## Build
+
+```
+make build
+```
+
+## Usage
+
+```
+tmt up   -ak ACCESS_KEY -sk SECRET_KEY -t https://api.example.com [-st SESSION_TOKEN] [-r REGION]
+tmt down -ak ACCESS_KEY -sk SECRET_KEY -t https://api.example.com [-st SESSION_TOKEN] [-r REGION] [-y]
+```
+
+Options:
+
+- `-ak` AWS access key ID (required)
+- `-sk` AWS secret access key (required)
+- `-st` AWS session token, for temporary/STS credentials (optional)
+- `-t` target URL to proxy to (required)
+- `-r` AWS region (default: `sa-east-1`)
+- `-y` skip the confirmation prompt (`down` only)
+
+Example:
+
+```
+tmt up   -ak AKIA... -sk wJalr... -t https://api.example.com -r us-east-1
+tmt down -ak AKIA... -sk wJalr... -t https://api.example.com -r us-east-1
+```
+
+## Author / License
+
+Copyright (C) 2026 alacerda (IntruderLabs). Licensed under the GNU General
+Public License v3.0 — see [LICENSE](LICENSE).
