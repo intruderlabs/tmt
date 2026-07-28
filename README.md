@@ -9,6 +9,11 @@
 TMT (Target my Target) stands up an AWS API Gateway REST API that proxies all traffic to a target URL, so requests appear to originate from AWS instead of your own
 infrastructure. Built for authorized security testing engagements.
 
+## Advantages
+
+- **Hard to block by IP.** The proxy uses a public `HTTP_PROXY` integration with no VPC Link/NAT/EIP, so outbound requests to the target egress through AWS's dynamic, shared IP pool for the region. The source IP varies between requests, so a target blocking a single IP (`/32`) won't reliably block the traffic. Note this isn't foolproof: blocking by AWS IP range/ASN (published in `ip-ranges.json`) or by cloud/datacenter reputation is still possible.
+- **Cheap per-region "VPN".** The `-r` flag picks the AWS region traffic egresses from, so tmt doubles as a low-cost way to route requests through a specific geographic region without standing up VPN infrastructure.
+
 ## Build
 
 ```
