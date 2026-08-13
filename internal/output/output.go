@@ -56,6 +56,24 @@ func UpSummary(apiName, apiID, region, target, endpoint string) {
 	fmt.Printf("  tmt down -ak '***' -sk '***' -t '%s' -r '%s'\n", target, region)
 }
 
+// JumpSummary prints the boxed summary shown after the jump-host pool is up
+// and the local MITM proxy is listening. It hands the user the ready-to-paste
+// -proxy line for their scanning tool.
+func JumpSummary(port int, regions []string) {
+	fmt.Println()
+	bold.Println(divider)
+	bold.Println(" JUMP PROXY ACTIVE")
+	bold.Println(divider)
+	fmt.Printf(" Regions:  %s\n", strings.Join(regions, ", "))
+	fmt.Printf(" Listen:   http://127.0.0.1:%d\n", port)
+	bold.Println(divider)
+	fmt.Println()
+	fmt.Println("Point your tool at the proxy (outbound calls rotate across regions):")
+	fmt.Printf("  nuclei -u https://target.example.com -proxy http://127.0.0.1:%d\n", port)
+	fmt.Println()
+	fmt.Println("Leave this running. Ctrl-C tears the pool down.")
+}
+
 // DownSummary prints the boxed summary shown after a successful "down".
 func DownSummary(apiName, apiID, region, target string) {
 	fmt.Println()
