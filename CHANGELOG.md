@@ -16,9 +16,22 @@ All notable changes to this project are documented here.
   function (Linux/arm64) and zips it as `bootstrap` into
   `internal/jump/lambdafn.zip`, which is embedded into the binary via
   `//go:embed`. `make build` and `make test` now depend on it.
+- **Named resources and teardown by name.** `up ... -n NAME` records what was
+  created; `down -n NAME -ak ... -sk ...` destroys it without needing to
+  remember the original target/regions. Applies to both backends.
+- **`tmt --list`** shows every resource tmt is tracking (name, backend, regions,
+  resources, and the command used to create it) from a local ledger.
+- Local ledger at `~/.tmt/state.json` (override the directory with `TMT_HOME`),
+  written `0600`. Every `up` records an entry; every `down` removes it.
+
+### Security
+
+- AWS credentials are never persisted: the `-ak`/`-sk`/`-st` flags (and their
+  values) are stripped from the command recorded in the ledger.
 
 ### Notes
 
 - The local jump-host proxy terminates TLS with an in-memory CA; scanning tools
   no longer verify the target's real certificate.
 - Lambda synchronous invokes cap response bodies at ~4 MB.
+- `tmt --list` reads only the local ledger; it does not call AWS.

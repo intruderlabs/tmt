@@ -90,6 +90,33 @@ Requires `lambda:*` plus `iam:CreateRole`/`PassRole` in the AWS account.
   the jump host caps response bodies at 4 MB and returns an error above that.
   Fine for scanning; large downloads won't fit.
 
+## Naming, teardown by name, and `--list`
+
+Both backends normally require you to remember the exact `up` command to tear
+down (the target/region for API Gateway, the region list for jump). To avoid
+orphaned AWS resources, tmt keeps a local **ledger** of everything it creates at
+`~/.tmt/state.json` (override the directory with `TMT_HOME`).
+
+- Name a resource on `up` with `-n NAME` (if omitted, a name is auto-generated).
+- Tear it down later with just the name plus credentials — no need to recall the
+  original flags:
+
+```
+tmt up   -jump -regions sa-east-1,us-east-1 -n scan -ak AKIA... -sk wJalr...
+tmt down -n scan -ak AKIA... -sk wJalr...
+```
+
+- List everything tmt is tracking, with the (credential-stripped) command used
+  to create each:
+
+```
+tmt --list
+```
+
+`--list` reads only the local ledger — it does not call AWS. **Credentials are
+never written to disk:** the `-ak`/`-sk`/`-st` flags are stripped before the
+command is recorded, and the ledger file is created `0600`.
+
 ## Author / License
 
 Copyright (C) 2026 alacerda (IntruderLabs). Licensed under the GNU General
