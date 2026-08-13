@@ -14,13 +14,23 @@ infrastructure. Built for authorized security testing engagements.
 - **Hard to block by IP.** The proxy uses a public `HTTP_PROXY` integration with no VPC Link/NAT/EIP, so outbound requests to the target egress through AWS's dynamic, shared IP pool for the region. The source IP varies between requests, so a target blocking a single IP (`/32`) won't reliably block the traffic. Note this isn't foolproof: blocking by AWS IP range/ASN (published in `ip-ranges.json`) or by cloud/datacenter reputation is still possible.
 - **Cheap per-region "VPN".** The `-r` flag picks the AWS region traffic egresses from, so tmt doubles as a low-cost way to route requests through a specific geographic region without standing up VPN infrastructure.
 
+TMT has two backends. The **API Gateway** proxy (default) fronts a single target
+URL. The **Lambda jump-host** (`-jump`) is a target-agnostic, multi-region egress:
+it deploys one Lambda per region and runs a local proxy that rotates outbound
+calls across them, so a scanning tool's requests egress from different regions.
+
 ## Build
 
 ```
 make build
 ```
 
-## Usage
+`make build` first runs `make lambda`, which compiles the jump-host function
+(Linux/arm64) and zips it as `bootstrap` into `internal/jump/lambdafn.zip`; that
+zip is embedded into the `tmt` binary via `//go:embed`. Bare `go build` without
+the zip present will fail — use `make`.
+
+## Usage — API Gateway proxy (per-target)
 
 ```
 tmt up   -ak ACCESS_KEY -sk SECRET_KEY -t https://api.example.com [-st SESSION_TOKEN] [-r REGION]
@@ -42,6 +52,43 @@ Example:
 tmt up   -ak AKIA... -sk wJalr... -t https://api.example.com -r us-east-1
 tmt down -ak AKIA... -sk wJalr... -t https://api.example.com -r us-east-1
 ```
+
+## Usage — Lambda jump-host (rotating multi-region egress)
+
+```
+tmt up   -jump -regions sa-east-1,us-east-1,eu-west-1 -ak ACCESS_KEY -sk SECRET_KEY [-st TOKEN] [-port 8008]
+```
+
+`up -jump` deploys one jump-host Lambda per region, starts a local MITM proxy,
+and **stays in the foreground**. Point your tool at it via its native proxy
+flag; each request rotates to a different region:
+
+```
+nuclei -u https://target.example.com -proxy http://127.0.0.1:8008
+```
+
+`Ctrl-C` tears the whole pool down. If `up -jump` was killed abruptly, sweep any
+orphans with:
+
+```
+tmt down -jump -regions sa-east-1,us-east-1,eu-west-1 -ak AKIA... -sk wJalr...
+```
+
+Extra options: `-regions` (comma-separated, required), `-port` (local proxy port,
+default `8008`).
+
+Requires `lambda:*` plus `iam:CreateRole`/`PassRole` in the AWS account.
+
+### Caveats
+
+- **TLS is MITM'd locally.** The local proxy terminates TLS with its own
+  in-memory CA so it can read each request and turn it into a `lambda.Invoke`.
+  This means the scanning tool no longer verifies the target's real certificate.
+  nuclei typically skips target-cert verification, so no CA trust setup is
+  needed; tools that do verify can trust the CA the proxy prints/exposes.
+- **6 MB response cap.** A Lambda synchronous invoke returns at most ~6 MB, so
+  the jump host caps response bodies at 4 MB and returns an error above that.
+  Fine for scanning; large downloads won't fit.
 
 ## Author / License
 

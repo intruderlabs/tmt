@@ -9,16 +9,24 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"net/http"
 	"net/url"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/apigateway"
+	"github.com/aws/aws-sdk-go-v2/service/iam"
+	"github.com/aws/aws-sdk-go-v2/service/lambda"
 
 	"github.com/intruderlabs/tmt/internal/gateway"
+	"github.com/intruderlabs/tmt/internal/jump"
 	"github.com/intruderlabs/tmt/internal/output"
+	"github.com/intruderlabs/tmt/internal/proxy"
 )
 
 const defaultRegion = "sa-east-1"
@@ -52,20 +60,33 @@ func usage() {
 	AWS API Gateway reverse proxy for security testing
 
 Usage:
+  # API Gateway reverse proxy (per-target)
   tmt up   -ak ACCESS_KEY -sk SECRET_KEY -t TARGET_URL [-st SESSION_TOKEN] [-r REGION]
   tmt down -ak ACCESS_KEY -sk SECRET_KEY -t TARGET_URL [-st SESSION_TOKEN] [-r REGION] [-y]
 
+  # Lambda jump-host + local rotating proxy (target-agnostic egress)
+  tmt up   -jump -regions R1,R2,... -ak ACCESS_KEY -sk SECRET_KEY [-st TOKEN] [-port 8008]
+  tmt down -jump -regions R1,R2,... -ak ACCESS_KEY -sk SECRET_KEY [-st TOKEN] [-y]
+
 Commands:
-  up      Create the API Gateway proxy for the target
-  down    Remove the API Gateway proxy for the target
+  up      Create the proxy (API Gateway, or -jump for the Lambda backend)
+  down    Remove the proxy (API Gateway, or -jump for the Lambda backend)
 
 Options:
-  -ak     AWS access key ID (required)
-  -sk     AWS secret access key (required)
-  -st     AWS session token, for temporary/STS credentials (optional)
-  -t      Target URL to proxy to, e.g. https://api.example.com (required)
-  -r      AWS region (default: %s)
-  -y      Skip the confirmation prompt (down only)
+  -ak       AWS access key ID (required)
+  -sk       AWS secret access key (required)
+  -st       AWS session token, for temporary/STS credentials (optional)
+  -t        Target URL to proxy to, e.g. https://api.example.com (API Gateway mode)
+  -r        AWS region (default: %s)
+  -y        Skip the confirmation prompt (down only)
+  -jump     Use the Lambda jump-host backend (rotating multi-region egress)
+  -regions  Comma-separated AWS regions to deploy to (jump mode)
+  -port     Local MITM proxy port (jump mode, default: 8008)
+
+Jump mode: 'up -jump' deploys one Lambda per region, starts a local MITM proxy,
+and stays in the foreground. Point your tool at it, e.g.:
+  nuclei -u https://target.example.com -proxy http://127.0.0.1:8008
+Ctrl-C tears the pool down; 'down -jump' cleans up any orphans.
 
 Common regions:
   sa-east-1        Sao Paulo
@@ -145,7 +166,15 @@ func (c *credentialFlags) newManager(ctx context.Context, target string) (*gatew
 func runUp(args []string) {
 	fs := flag.NewFlagSet("up", flag.ExitOnError)
 	creds := bindCredentialFlags(fs)
+	jumpMode := fs.Bool("jump", false, "use the Lambda jump-host backend (rotating egress)")
+	regions := fs.String("regions", "", "comma-separated AWS regions (jump mode)")
+	port := fs.Int("port", 8008, "local MITM proxy port (jump mode)")
 	fs.Parse(args)
+
+	if *jumpMode {
+		runJumpUp(creds, *regions, *port)
+		return
+	}
 
 	target, err := creds.validate()
 	if err != nil {
@@ -186,7 +215,14 @@ func runDown(args []string) {
 	fs := flag.NewFlagSet("down", flag.ExitOnError)
 	creds := bindCredentialFlags(fs)
 	yes := fs.Bool("y", false, "skip the confirmation prompt")
+	jumpMode := fs.Bool("jump", false, "tear down the Lambda jump-host backend")
+	regions := fs.String("regions", "", "comma-separated AWS regions (jump mode)")
 	fs.Parse(args)
+
+	if *jumpMode {
+		runJumpDown(creds, *regions, *yes)
+		return
+	}
 
 	target, err := creds.validate()
 	if err != nil {
@@ -222,4 +258,156 @@ func runDown(args []string) {
 
 	output.Success("Proxy removed")
 	output.DownSummary(res.Name, res.APIID, *creds.region, target)
+}
+
+// runJumpUp deploys one jump-host Lambda per region, starts the local MITM
+// proxy, and blocks in the foreground until interrupted, tearing the pool down
+// on exit. This is the additive Lambda backend; it does not touch the API
+// Gateway path above.
+func runJumpUp(creds *credentialFlags, regionsCSV string, port int) {
+	regions := parseRegions(regionsCSV)
+	if err := creds.validateJump(regions); err != nil {
+		output.Error("%s", err)
+		os.Exit(1)
+	}
+
+	ctx := context.Background()
+	var backends []proxy.Invoker
+	var managers []*jump.Manager
+
+	for _, region := range regions {
+		cfg, err := creds.regionConfig(ctx, region)
+		if err != nil {
+			output.Error("[%s] %s", region, err)
+			teardown(ctx, managers)
+			os.Exit(1)
+		}
+		lc := lambda.NewFromConfig(cfg)
+		mgr := jump.NewManager(lc, iam.NewFromConfig(cfg), region)
+
+		output.Step("[%s] Deploying jump-host Lambda...", region)
+		res, err := mgr.Up(ctx)
+		if err != nil {
+			output.Error("[%s] %s", region, err)
+			teardown(ctx, managers)
+			os.Exit(1)
+		}
+		if res.Existing {
+			output.Warn("[%s] %s already exists", region, res.Name)
+		} else {
+			output.Success("[%s] %s deployed", region, res.Name)
+		}
+
+		managers = append(managers, mgr)
+		backends = append(backends, proxy.NewLambdaInvoker(lc, jump.FuncName(region)))
+	}
+
+	prox, err := proxy.New(backends)
+	if err != nil {
+		output.Error("%s", err)
+		teardown(ctx, managers)
+		os.Exit(1)
+	}
+
+	srv := &http.Server{Addr: fmt.Sprintf("127.0.0.1:%d", port), Handler: prox}
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			output.Error("proxy server: %s", err)
+		}
+	}()
+
+	output.JumpSummary(port, regions)
+
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+	<-sig
+
+	fmt.Println()
+	output.Step("Shutting down proxy and tearing down pool...")
+	srv.Close()
+	teardown(ctx, managers)
+	output.Success("Done")
+}
+
+// runJumpDown sweeps the given regions, removing any jump-host function/role.
+// It is the safety net for orphans left if `up -jump` was killed abruptly.
+func runJumpDown(creds *credentialFlags, regionsCSV string, yes bool) {
+	regions := parseRegions(regionsCSV)
+	if err := creds.validateJump(regions); err != nil {
+		output.Error("%s", err)
+		os.Exit(1)
+	}
+	if !yes && !output.Confirm(fmt.Sprintf("Remove the jump-host pool in: %s?", strings.Join(regions, ", "))) {
+		output.Warn("Aborted")
+		os.Exit(0)
+	}
+
+	ctx := context.Background()
+	for _, region := range regions {
+		cfg, err := creds.regionConfig(ctx, region)
+		if err != nil {
+			output.Error("[%s] %s", region, err)
+			continue
+		}
+		mgr := jump.NewManager(lambda.NewFromConfig(cfg), iam.NewFromConfig(cfg), region)
+		output.Step("[%s] Removing jump-host...", region)
+		res, err := mgr.Down(ctx)
+		if err != nil {
+			output.Error("[%s] %s", region, err)
+			continue
+		}
+		if res.Found {
+			output.Success("[%s] Removed %s", region, res.Name)
+		} else {
+			output.Warn("[%s] Nothing to remove", region)
+		}
+	}
+}
+
+// teardown removes every jump-host provisioned so far, best-effort.
+func teardown(ctx context.Context, managers []*jump.Manager) {
+	for _, m := range managers {
+		if _, err := m.Down(ctx); err != nil {
+			output.Warn("[%s] teardown: %s", m.Region(), err)
+		}
+	}
+}
+
+// parseRegions splits a comma-separated region list, trimming and de-duping.
+func parseRegions(csv string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, r := range strings.Split(csv, ",") {
+		r = strings.TrimSpace(r)
+		if r == "" || seen[r] {
+			continue
+		}
+		seen[r] = true
+		out = append(out, r)
+	}
+	return out
+}
+
+func (c *credentialFlags) validateJump(regions []string) error {
+	var missing []string
+	if *c.accessKey == "" {
+		missing = append(missing, "-ak")
+	}
+	if *c.secretKey == "" {
+		missing = append(missing, "-sk")
+	}
+	if len(regions) == 0 {
+		missing = append(missing, "-regions")
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("missing required flag(s): %s", strings.Join(missing, ", "))
+	}
+	return nil
+}
+
+func (c *credentialFlags) regionConfig(ctx context.Context, region string) (aws.Config, error) {
+	return awsconfig.LoadDefaultConfig(ctx,
+		awsconfig.WithRegion(region),
+		awsconfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(*c.accessKey, *c.secretKey, *c.sessionToken)),
+	)
 }
