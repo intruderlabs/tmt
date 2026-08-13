@@ -82,7 +82,8 @@ func FuncName(region string) string {
 	return fmt.Sprintf("tmt-egress-%x", sum[:4])
 }
 
-func roleName(region string) string {
+// RoleName is the deterministic execution-role name for a region.
+func RoleName(region string) string {
 	sum := sha256.Sum256([]byte(region))
 	return fmt.Sprintf("tmt-egress-role-%x", sum[:4])
 }
@@ -125,7 +126,7 @@ func (m *Manager) Up(ctx context.Context) (*UpResult, error) {
 // ensureRole returns the ARN of the region's execution role, creating it (and
 // attaching the basic-execution policy) if absent.
 func (m *Manager) ensureRole(ctx context.Context) (string, error) {
-	rn := roleName(m.region)
+	rn := RoleName(m.region)
 
 	if got, err := m.iam.GetRole(ctx, &iam.GetRoleInput{RoleName: aws.String(rn)}); err == nil {
 		return aws.ToString(got.Role.Arn), nil
@@ -209,7 +210,7 @@ type DownResult struct {
 // idempotent: absent resources are treated as nothing-to-do.
 func (m *Manager) Down(ctx context.Context) (*DownResult, error) {
 	name := FuncName(m.region)
-	rn := roleName(m.region)
+	rn := RoleName(m.region)
 	found := true
 
 	if _, err := m.lambda.DeleteFunction(ctx, &lambda.DeleteFunctionInput{FunctionName: aws.String(name)}); err != nil {
