@@ -29,6 +29,13 @@ All notable changes to this project are documented here.
 - AWS credentials are never persisted: the `-ak`/`-sk`/`-st` flags (and their
   values) are stripped from the command recorded in the ledger.
 
+### Documentation
+
+- Rewrote the README for open-source use: updated tagline for both backends,
+  added an authorized-use notice, requirements (Go 1.25+, per-backend IAM
+  permissions), a build note that `make` is required (embedded zip), and
+  documented `-n` / `down -n` / `tmt --list` and the local ledger.
+
 ### Notes
 
 - The local jump-host proxy terminates TLS with an in-memory CA; scanning tools
