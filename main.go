@@ -57,13 +57,8 @@ func main() {
 }
 
 func usage() {
+	fmt.Fprint(os.Stderr, output.Banner())
 	fmt.Fprintf(os.Stderr, `
-	▄▖▖  ▖▄▖      ▄▖        ▗   ▖  ▖    ▄▖        ▗ 
-	▐ ▛▖▞▌▐   ▄▖  ▐ ▀▌▛▘▛▌█▌▜▘  ▛▖▞▌▌▌  ▐ ▀▌▛▘▛▌█▌▜▘
-	▐ ▌▝ ▌▐       ▐ █▌▌ ▙▌▙▖▐▖  ▌▝ ▌▙▌  ▐ █▌▌ ▙▌▙▖▐▖
-                    	▄▌          ▄▌        ▄▌    
-	AWS API Gateway reverse proxy for security testing
-
 Usage:
   # API Gateway reverse proxy (per-target)
   tmt up   -ak ACCESS_KEY -sk SECRET_KEY -t TARGET_URL [-st SESSION_TOKEN] [-r REGION]
