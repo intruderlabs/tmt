@@ -19,6 +19,36 @@ var (
 	bold    = color.New(color.Bold)
 )
 
+// Banner returns the TMT startup banner: an ANSI-Shadow "TMT" with a vertical
+// magenta→indigo 256-color gradient. Falls back to plain text when color is
+// off (fatih/color already honors NO_COLOR and non-TTY output).
+func Banner() string {
+	art := []string{
+		"████████╗███╗   ███╗████████╗",
+		"╚══██╔══╝████╗ ████║╚══██╔══╝",
+		"   ██║   ██╔████╔██║   ██║   ",
+		"   ██║   ██║╚██╔╝██║   ██║   ",
+		"   ██║   ██║ ╚═╝ ██║   ██║   ",
+		"   ╚═╝   ╚═╝     ╚═╝   ╚═╝   ",
+	}
+	shades := []int{171, 135, 135, 99, 63, 63}
+	var b strings.Builder
+	b.WriteByte('\n')
+	for i, line := range art {
+		if color.NoColor {
+			b.WriteString(line + "\n")
+			continue
+		}
+		fmt.Fprintf(&b, "\x1b[38;5;%dm%s\x1b[0m\n", shades[i], line)
+	}
+	if color.NoColor {
+		b.WriteString("Target My Target · AWS API Gateway reverse proxy for security testing\n")
+	} else {
+		b.WriteString("\x1b[38;5;141mTarget My Target\x1b[0m \x1b[2m· AWS API Gateway reverse proxy for security testing\x1b[0m\n")
+	}
+	return b.String()
+}
+
 func Step(format string, a ...any)    { step.Printf(format+"\n", a...) }
 func Info(format string, a ...any)    { info.Printf(format+"\n", a...) }
 func Success(format string, a ...any) { success.Printf(format+"\n", a...) }

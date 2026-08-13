@@ -21,6 +21,12 @@ All notable changes to this project are documented here.
   remember the original target/regions. Applies to both backends.
 - **`tmt --list`** shows every resource tmt is tracking (name, backend, regions,
   resources, and the command used to create it) from a local ledger.
+
+### Changed
+
+- New startup banner: an ANSI-Shadow "TMT" with a magenta→indigo 256-color
+  gradient, replacing the previous low-legibility half-block art. Color is
+  TTY-aware and honors `NO_COLOR`.
 - Local ledger at `~/.tmt/state.json` (override the directory with `TMT_HOME`),
   written `0600`. Every `up` records an entry; every `down` removes it.
 
